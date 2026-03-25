@@ -2,8 +2,7 @@ import { useState } from 'react'
 import './LoginPage.css'
 import logo from '../assets/wonder-learning-logo.png'
 
-const ADMIN_EMAIL = 'pramod.wonderlearning@gmail.com'
-const ADMIN_PASSWORD = 'Pramod@1309'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 const LoginPage = () => {
   const [activeTab, setActiveTab] = useState('admin')
@@ -12,26 +11,32 @@ const LoginPage = () => {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault()
     setError('')
     setLoading(true)
 
     if (activeTab === 'admin') {
-      const matchesAdmin =
-        email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() &&
-        password === ADMIN_PASSWORD
+      try {
+        const response = await fetch(`${API_BASE_URL}/admin/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        })
 
-      if (matchesAdmin) {
-        // In this frontend-only setup we just show success.
+        if (!response.ok) {
+          throw new Error('Invalid credentials')
+        }
+
+        const data = await response.json()
+        alert(`Admin login successful. Welcome ${data.email}.`)
         setLoading(false)
-        alert('Admin login successful.')
+        return
+      } catch (err) {
+        setLoading(false)
+        setError('Invalid admin credentials.')
         return
       }
-
-      setLoading(false)
-      setError('Invalid admin credentials.')
-      return
     }
 
     setLoading(false)

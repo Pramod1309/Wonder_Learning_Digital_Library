@@ -1,15 +1,19 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy.orm import Session
-from typing import List
 
 from database import SessionLocal, engine
-from models import Book, User, BorrowedBook
-from schemas import Book as BookSchema, BookCreate, BookUpdate, User as UserSchema, UserCreate, BorrowedBook as BorrowedBookSchema, BorrowedBookCreate
+from models import Admin
+from schemas import AdminLoginRequest, AdminLoginResponse
+from passlib.context import CryptContext
 
 app = FastAPI(title="Wonder Learning Digital Library API")
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "pramod.wonderlearning@gmail.com")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Pramod@1309")
 
 allowed_origins = os.getenv(
     "CORS_ORIGINS",
@@ -45,58 +49,39 @@ def get_db():
 def read_root():
     return {"message": "Wonder Learning Digital Library API is running 🚀"}
 
-@app.get("/books", response_model=List[BookSchema])
-def get_books(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    books = db.query(Book).offset(skip).limit(limit).all()
-    return books
+@app.post("/admin/login", response_model=AdminLoginResponse)
+def admin_login(payload: AdminLoginRequest, db: Session = Depends(get_db)):
+    try:
+        Admin.__table__.create(bind=engine, checkfirst=True)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to initialize admin table. {exc}",
+        )
 
-@app.get("/books/{book_id}", response_model=BookSchema)
-def get_book(book_id: int, db: Session = Depends(get_db)):
-    book = db.query(Book).filter(Book.id == book_id).first()
-    if book is None:
-        raise HTTPException(status_code=404, detail="Book not found")
-    return book
+    if payload.email.strip().lower() != ADMIN_EMAIL.strip().lower():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-@app.post("/books", response_model=BookSchema)
-def create_book(book: BookCreate, db: Session = Depends(get_db)):
-    db_book = Book(**book.dict())
-    db.add(db_book)
-    db.commit()
-    db.refresh(db_book)
-    return db_book
+    admin = db.query(Admin).filter(Admin.email == ADMIN_EMAIL).first()
 
-@app.put("/books/{book_id}", response_model=BookSchema)
-def update_book(book_id: int, book: BookUpdate, db: Session = Depends(get_db)):
-    db_book = db.query(Book).filter(Book.id == book_id).first()
-    if db_book is None:
-        raise HTTPException(status_code=404, detail="Book not found")
-    
-    update_data = book.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(db_book, field, value)
-    
-    db.commit()
-    db.refresh(db_book)
-    return db_book
+    if admin is None:
+        if payload.password != ADMIN_PASSWORD:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        admin = Admin(
+            email=ADMIN_EMAIL,
+            hashed_password=pwd_context.hash(ADMIN_PASSWORD),
+        )
+        db.add(admin)
+        db.commit()
+        db.refresh(admin)
+    else:
+        if not pwd_context.verify(payload.password, admin.hashed_password):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-@app.delete("/books/{book_id}")
-def delete_book(book_id: int, db: Session = Depends(get_db)):
-    db_book = db.query(Book).filter(Book.id == book_id).first()
-    if db_book is None:
-        raise HTTPException(status_code=404, detail="Book not found")
-    
-    db.delete(db_book)
-    db.commit()
-    return {"message": "Book deleted successfully"}
+    return AdminLoginResponse(
+        access_token="admin-token",
+        token_type="bearer",
+        user_type="admin",
+        email=admin.email,
+    )
 
-@app.get("/books/search", response_model=List[BookSchema])
-def search_books(q: str, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    books = db.query(Book).filter(
-        Book.title.ilike(f"%{q}%") | Book.author.ilike(f"%{q}%") | Book.category.ilike(f"%{q}%")
-    ).offset(skip).limit(limit).all()
-    return books
-
-@app.get("/books/category/{category}", response_model=List[BookSchema])
-def get_books_by_category(category: str, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    books = db.query(Book).filter(Book.category == category).offset(skip).limit(limit).all()
-    return books
